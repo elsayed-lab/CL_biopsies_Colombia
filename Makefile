@@ -22,3 +22,6 @@ SINGULARITY_BIND="${HOME}/scratch:/scratch,${HOME}/.Xauthority,${PWD}:/output"
 %.runover: %.yml
 	mkdir -p $(basename $<)_overlay
 	sudo singularity run -B ${SINGULARITY_BIND} --overlay $(basename $<)_overlay $(basename $@).sif
+
+%.upload: %.sif
+	rclone --progress sync $< umiacs:elsayedsingularity/

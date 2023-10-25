@@ -1,0 +1,343 @@
+---
+title: "TMRC3 202308: Creating Data Structures"
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+output:
+ html_document:
+  code_download: true
+  code_folding: show
+  fig_caption: true
+  fig_height: 7
+  fig_width: 7
+  highlight: default
+  keep_md: false
+  mode: selfcontained
+  number_sections: true
+  self_contained: true
+  theme: readable
+  toc: true
+  toc_float:
+   collapsed: false
+   smooth_scroll: false
+---
+
+<style>
+  body .main-container {
+    max-width: 1600px;
+  }
+</style>
+
+```{r options, include=FALSE}
+library(hpgltools)
+library(dplyr)
+library(forcats)
+library(glue)
+library(EuPathDB)
+
+tt <- sm(devtools::load_all("~/hpgltools"))
+knitr::opts_knit$set(
+  progress = TRUE, verbose = TRUE, width = 90, echo = TRUE)
+knitr::opts_chunk$set(
+  error = TRUE, fig.width = 8, fig.height = 8, fig.retina = 2,
+  fig.pos = "t", fig.align = "center", dpi = if (knitr::is_latex_output()) 72 else 300,
+  out.width = "100%", dev = "svg",
+  dev.args = list(png = list(type = "cairo-png")))
+old_options <- options(
+  digits = 4, stringsAsFactors = FALSE, knitr.duplicate.label = "allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 12))
+ver <- Sys.getenv("VERSION")
+previous_file <- ""
+rundate <- format(Sys.Date(), format = "%Y%m%d")
+
+##tmp <- try(sm(loadme(filename=gsub(pattern="\\.Rmd", replace="\\.rda\\.xz", x=previous_file))))
+rmd_file <- glue("tmrc3_datasets_{ver}.Rmd")
+savefile <- gsub(pattern = "\\.Rmd", replace = "\\.rda\\.xz", x = rmd_file)
+data_structures <- c()
+```
+
+# Changelog
+
+* 202308: Moved preprocessing material from the datastructures file to here.
+
+# Introduction
+
+This document outlines in some detail the tasks performed in order to
+process the 'raw' data.
+
+# Sequence preprocessing
+
+All of the preprocessing tasks were performed with CYOA and included
+the following:
+
+1. All samples were trimmed with trimomatic using options to remove
+   adapters using a supplemented copy of the default adapter database
+   (ILLUMINACLIP:2:30:10:2:keepBothReads), reads with fewer than 40
+   nucleotides remaining were discarded (MINLEN:40), and a mean quality
+   >= 25 over 4 nucleotide window was used for trimming
+   (SLIDINGWINDOW:4:25).  When paired end reads were available, only the
+   properly paired were used for the tasks that follow.  The generated
+   scripts for each sample which performed this trimming have the prefix
+   ‘05trim’.
+2. Reads were passed to fastqc using the default parameters to query
+   read quality, remaining adapter content, and as an initial survey for
+   contaminants.  The generated scripts which performed this have the
+   prefix ‘06fastqc’
+3. Every sample was passed to kraken2 against its comprehensive
+   ‘standard’ and ‘virus’ databases, updated 2021/06 in order to query
+   for putative contaminants and potentially interesting viral
+   sequences.  The scripts which performed this have the prefix
+   ‘11kraken’.
+4. Samples were passed to hisat2 against the hg38 release 100 human
+   genome with the default options as well as the Leishmania panamensis
+   MHOM/COL release 46 in serial.  The scripts which performed these
+   operations have the prefixes ‘15hisat2_hg38_100’ and
+   ‘15hisat2_lpanamensis_v46’ respectively.
+5. The resulting alignments were converted to the binary, sorted,
+   compressed, and indexed format via samtools.  Additional filters were
+   performed to extract only the non-variant alignments .  The scripts
+   which performed this have the prefix ‘19s2b_{genome}’.
+6. These were cross referenced against the relevant feature databases in
+   order to generate count tables by gene via htseq.  These scripts have
+   the prefix ‘21hts’.
+7. Each sample was passed to salmon against the transcript databases for
+   hg38 release 100, L. panamensis release 46, and a concatenation of
+   the two.  These scripts have the suffix ‘30sal_{genome}’.
+8. A regular expression search was performed for the observed set of
+   spliced leader sequences.  The sequence ‘AGTTTCTGTACTTTATTGG’ rather
+   than the entire SL sequence was searched to avoid potential SL
+   variants.  The relevant scripts have the prefix ‘50slsearch’.
+
+Given the fact that these tasks were performed over the course of 4
+years, during which time we changed sequencing platforms and
+computational infrastructure, the actual prefixes/suffixes of the
+various scripts and outputs are not as consistent as I would like.
+
+### Trimming raw reads
+
+With the above caveat in mind, I am copy/pasting the little shell fragments I
+used when trimming the samples:
+
+```{bash preprocess_fragment, eval=FALSE}
+## trim.sh, this assumes one will manually cd into the new sample's directory and run ../tmrc_trim.sh
+## In addition, it assumes that the new data files will reside in the directory 'unprocessed/'.
+input=$(/bin/ls -d unprocessed | tr '\n' ':' | sed 's/:$//g')
+echo "Running trimomatic on ${input}"
+cmd="cyoa --method trim --input ${input} 2>>cyoa_trim.out 1>&2 &"
+echo "${cmd}" > cyoa_trim.out
+${cmd}
+```
+
+The following is a script which is generated by the above, arbitrarily
+chosen from sample TMRC30140.  If anyone reads it carefully, one might
+note that this sample is from before I started depositing new raw
+reads into the 'unprocessed' directory, as a result the input reads
+were in the cwd.
+
+```{bash trim_sequence_script, eval=FALSE}
+#!/usr/bin/env bash
+#SBATCH --export=ALL
+#SBATCH --mail-type=NONE
+#SBATCH --chdir=/fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30140
+#SBATCH --partition=dpart
+#SBATCH --qos=workstation --nice=10
+#SBATCH --nodes=1 --requeue
+#SBATCH --time=10:00:00
+#SBATCH --job-name=01trim_TMRC30140_S3_R1_001
+#SBATCH --mem=40G
+#SBATCH --cpus-per-task=3
+#SBATCH --output=outputs/logs/trim_TMRC30140_S3_R1_001.sbatchout
+
+echo "## Started /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30140/scripts/01trim_TMRC30140_S3_R1_001.sh at $(date) on $(hostname) with id ${SLURM_JOBID}." >> outputs/log.txt
+
+module add trimomatic
+
+## This call to trimomatic removes illumina and epicentre adapters from TMRC30140_S3_R1_001.fastq.gz:TMRC30140_S3_R2_001.fastq.gz.
+## It also performs a sliding window removal of anything with quality <25;
+## cutadapt provides an alternative to this tool.
+## The original sequence data is recompressed and saved in the sequences/ directory.
+mkdir -p outputs/01trimomatic
+## Note that trimomatic prints all output and errors to STDERR, so send both to output
+trimmomatic PE \
+  -threads 1 \
+  -phred33 \
+  TMRC30140_S3_R1_001.fastq.gz TMRC30140_S3_R2_001.fastq.gz \
+  TMRC30140_S3_R1_001-trimmed_paired.fastq TMRC30140_S3_R1_001-trimmed_unpaired.fastq \
+  TMRC30140_S3_R2_001-trimmed_paired.fastq TMRC30140_S3_R2_001-trimmed_unpaired.fastq \
+   ILLUMINACLIP:/cbcb/sw/RedHat-7-x86_64/common/local/perl/5.34/lib/site_perl/5.34.0/auto/share/dist/Bio-Adventure/genome/adapters.fa:2:20:10:2:keepBothReads \
+  SLIDINGWINDOW:4:20 MINLEN:40 \
+  1>outputs/01trimomatic/TMRC30140_S3_R1_001-trimomatic.out 2>&1
+excepted=$(grep "Exception" outputs/TMRC30140_S3_R1_001-trimomatic.out)
+## The following is in case the illumina clipping fails, which it does if this has already been run I think.
+if [[ "${excepted}" != "" ]]; then
+  trimmomatic PE \
+    -threads 1 \
+    -phred33 \
+    TMRC30140_S3_R1_001.fastq.gz TMRC30140_S3_R2_001.fastq.gz \
+    TMRC30140_S3_R1_001-trimmed_paired.fastq TMRC30140_S3_R1_001-trimmed_unpaired.fastq \
+    TMRC30140_S3_R2_001-trimmed_paired.fastq TMRC30140_S3_R2_001-trimmed_unpaired.fastq \
+     SLIDINGWINDOW:4:25 MINLEN:50\
+    1>outputs/01trimomatic/TMRC30140_S3_R1_001-trimomatic.out 2>&1
+fi
+sleep 10
+mv TMRC30140_S3_R1_001-trimmed_paired.fastq TMRC30140_S3_R1_001-trimmed.fastq
+mv TMRC30140_S3_R2_001-trimmed_paired.fastq TMRC30140_S3_R2_001-trimmed.fastq
+
+## Recompress the unpaired reads, this should not take long.
+xz -9e -f TMRC30140_S3_R1_001-trimmed_unpaired.fastq
+xz -9e -f TMRC30140_S3_R2_001-trimmed_unpaired.fastq
+## Recompress the paired reads.
+xz -9e -f TMRC30140_S3_R1_001-trimmed.fastq
+xz -9e -f TMRC30140_S3_R2_001-trimmed.fastq
+ln -sf TMRC30140_S3_R1_001-trimmed.fastq.xz r1_trimmed.fastq.xz
+ln -sf TMRC30140_S3_R2_001-trimmed.fastq.xz r2_trimmed.fastq.xz
+
+
+## The following lines give status codes and some logging
+echo "## Job status: $? " >> outputs/log.txt
+echo "## $(hostname) Finished ${SLURM_JOBID} 01trim_TMRC30140_S3_R1_001.sh at $(date), it took $(( SECONDS / 60 )) minutes." >> outputs/log.txt
+
+walltime=$(scontrol show job "${SLURM_JOBID}" | grep RunTime | perl -F'/\s+|=/' -lane '{print $F[2]}')
+echo "#### walltime used by ${SLURM_JOBID} was: ${walltime:-null}" >> outputs/log.txt
+maxmem=$(sstat --format=MaxVMSize -n "${SLURM_JOBID}.batch")
+echo "#### maximum memory used by ${SLURM_JOBID} was: ${maxmem:-null}" >> outputs/log.txt
+avecpu=$(sstat --format=AveCPU -n "${SLURM_JOBID}.batch")
+echo "#### average cpu used by ${SLURM_JOBID} was: ${avecpu:-null}" >> outputs/log.txt
+```
+
+### Mapping the trimmed reads
+
+There is a similar shell fragment used to map these trimmed reads
+against the hg38_100 genome/transcriptome along with the panamensis
+genome:
+
+```{bash map_fragment, eval=FALSE}
+#!/usr/bin/env bash
+input=$(/bin/ls *_trimmed.fastq.xz | tr '\n' ':' | sed 's/:$//g')
+cyoa --task map --method hisat --species hg38_100 --gff_type gene --gff_tag gene_id  \
+  --input ${input} 2>tmrc3_map.out 1>&2 &
+cyoa --task map --method hisat --species lpanamensis_v36 --gff_type gene --gff_tag ID \
+  --input ${input} 2>>tmrc3_map.out 1>&2 &
+cyoa --task map --method salmon --species hg38_100 \
+     --input ${input} 2>tmrc3_salmon.out 1>&2 &
+```
+
+The following is the resulting mapping script taken arbitrarily from
+sample TMRC30205.  There are a few aspects of this script which
+changed from the beginning to end of the project: the prefix #
+changed, I added some logic to check if the requisite software (in
+this case hisat2/samtools/htseq) is already in the path, and load it
+if not.  I also changed the htseq output filenames slightly over time
+to try to make certain that they are consistent and that it is easy to
+identify the important parameters just from the output filename.
+
+```{bash hisat_map_script, eval=FALSE}
+#!/usr/bin/env bash
+#SBATCH --chdir=/fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205
+#SBATCH --partition=dpart
+#SBATCH --qos=workstation --nice=10
+#SBATCH --nodes=1 --requeue
+#SBATCH --time=10:00:00
+#SBATCH --job-name=40hisat2_hg38_100_genome
+#SBATCH --mem=48G
+#SBATCH --cpus-per-task=4
+#SBATCH --output=outputs/logs/hisat2_hg38_100_genome.sbatchout
+
+echo "## Started /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205/scripts/40hisat2_hg38_100_genome.sh at $(date) on $(hostname) with id ${SLURM_JOBID}." >> outputs/log.txt
+
+module add hisat2 samtools htseq
+
+## This is a hisat2 alignment of  -1 <(less /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205/r1_trimmed.fastq.xz) -2 <(less /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205/r2_trimmed.fastq.xz)  against /cbcbhomes/abelew/libraries/genome/indexes/hg38_100
+
+mkdir -p outputs/40hisat2_hg38_100
+sleep 3
+hisat2 -x /cbcbhomes/abelew/libraries/genome/indexes/hg38_100  \
+  -p 4 \
+  -q   -1 <(less /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205/r1_trimmed.fastq.xz) -2 <(less /fs/cbcb-lab/nelsayed/scratch/atb/rnaseq/lpanamensis_tmrc_2019/preprocessing/TMRC30205/r2_trimmed.fastq.xz)  \
+  --phred33 \
+  --un-gz outputs/40hisat2_hg38_100/TMRC30205_unaldis_hg38_100_genome.fastq \
+  --al-gz outputs/40hisat2_hg38_100/TMRC30205_aldis_hg38_100_genome.fastq \
+  --un-conc-gz outputs/40hisat2_hg38_100/TMRC30205_unalcon_hg38_100_genome.fastq \
+  --al-conc-gz outputs/40hisat2_hg38_100/TMRC30205_alcon_hg38_100_genome.fastq \
+  -S outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.sam \
+  2>outputs/40hisat2_hg38_100/hisat2_hg38_100_genome_TMRC30205.err \
+  1>outputs/40hisat2_hg38_100/hisat2_hg38_100_genome_TMRC30205.out
+
+
+## The following lines give status codes and some logging
+echo "## Job status: $? " >> outputs/log.txt
+echo "## $(hostname) Finished ${SLURM_JOBID} 40hisat2_hg38_100_genome.sh at $(date), it took $(( SECONDS / 60 )) minutes." >> outputs/log.txt
+
+walltime=$(scontrol show job "${SLURM_JOBID}" | grep RunTime | perl -F'/\s+|=/' -lane '{print $F[2]}')
+echo "#### walltime used by ${SLURM_JOBID} was: ${walltime:-null}" >> outputs/log.txt
+maxmem=$(sstat --format=MaxVMSize -n "${SLURM_JOBID}.batch")
+echo "#### maximum memory used by ${SLURM_JOBID} was: ${maxmem:-null}" >> outputs/log.txt
+avecpu=$(sstat --format=AveCPU -n "${SLURM_JOBID}.batch")
+echo "#### average cpu used by ${SLURM_JOBID} was: ${avecpu:-null}" >> outputs/log.txt
+```
+
+From here on I will remove the suffix of the script.  Here is the sam
+to bam conversion script which was created by cyoa.
+
+```{bash sam2bam_script, eval=FALSE}
+module add samtools bamtools
+
+## Converting the text sam to a compressed, sorted, indexed bamfile.
+## Also printing alignment statistics to outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam.stats
+## This job depended on: 133995
+
+echo "Starting samtools"
+if $(test ! -r outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.sam); then
+    echo "Could not find the samtools input file."
+    exit 1
+fi
+samtools view -u -t /cbcbhomes/abelew/libraries/genome/hg38_100.fasta \
+  -S outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.sam -o outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam  \
+  2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam.err 1>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam.out && \
+
+  samtools sort -l 9 outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam -o outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-sorted.bam \
+  2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-sorted.err 1>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-sorted.out && \
+  rm outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam && \
+  rm outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.sam && \
+  mv outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-sorted.bam outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam &&  samtools index outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam
+
+bamtools stats -in outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam 2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam.stats 1>&2
+
+## The following will fail if this is single-ended.
+samtools view -b -f 2 -o outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.bam outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome.bam && samtools index outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.bam
+bamtools stats -in outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.bam 2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.stats 1>&2
+```
+
+And the counting script for htseq.  I changed the output filename for
+this step on multiple occasions over the course of sample collection.
+
+```{bash htseq_hg38_100, eval=FALSE}
+module add htseq
+
+## Counting the number of hits in outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.bam for each feature found in /cbcbhomes/abelew/libraries/genome/hg38_100.gff
+## Is this stranded? no.  The defaults of htseq are:
+##  --order=name --idattr=gene_id --minaqual=10 --type=exon --stranded=yes --mode=union
+
+htseq-count \
+  -q -f bam -s no  --type gene  --idattr gene_id \
+  outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired.bam \
+  /cbcbhomes/abelew/libraries/genome/hg38_100.gff \
+  2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired_all_hg38_100_sno_gene_gene_id.err \
+  1>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired_all_hg38_100_sno_gene_gene_id.count && \
+    xz -f -9e outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired_all_hg38_100_sno_gene_gene_id.count 2>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired_all_hg38_100_sno_gene_gene_id.err.xz 1>outputs/40hisat2_hg38_100/TMRC30205_hg38_100_genome-paired_all_hg38_100_sno_gene_gene_id.count.xz
+```
+
+The same cyoa invocation produced a series of scripts to aggressively
+compress the (un)mapped reads from hisat2 and print out some summary
+statistics of the runs.
+
+Conversely, here is a salmon script which was used for sample
+TMRC30124 (without the slurm prefix/suffix):
+
+```{bash salmon_script, eval=FALSE}
+mkdir -p outputs/salmon_hg38_100 && sleep 3 && \
+salmon quant -i /cbcbhomes/abelew/libraries/genome/indexes/hg38_100_salmon_index \
+  -l A --gcBias --validateMappings  \
+   -r <(less r1_trimmed.fastq.gz)  \
+  -o outputs/salmon_hg38_100 \
+  2>outputs/salmon_hg38_100/salmon.err 1>outputs/salmon_hg38_100/salmon.out
+```
