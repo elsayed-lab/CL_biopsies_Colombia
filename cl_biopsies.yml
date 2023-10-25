@@ -1,0 +1,117 @@
+Bootstrap: docker
+From: debian:stable
+
+## Order of sections:
+## %labels:      unknown, storing metadata
+## %files:       are before %post or installation procedures.
+## %setup:       in the host-system after base OS install.
+## %post:        in the container after base OS install.
+## %test:        run at end of build process.
+## %environment: sourced at runtime, not build; if needed at build, do it in %post.
+## %runscript:   writes the container file /singularity and is run via 'singularity run'
+
+%apphelp hpgltools_test
+echo "Run the hpgltools test suite."
+
+
+%apprun hpgltools_test
+echo "Running the hpgltools test suite."
+exec cd /data/hpgltools && make test
+
+
+%environment
+## If this works properly, I can delete the bashrc, apparently the contents of this stanza are
+## written to /.singularity.d/env/90-environment.sh
+## As of this writing, it appears VERSION is not propagated to the %post block, therefore
+## the definition is repeated there.
+umask 002
+export VERSION=202310
+export CLICOLOR=true
+export CONDA_DEFAULT_ENV=hpgltools
+export CONDA_PREFIX=/sw/local/conda/${VERSION}/envs/hpgltools
+export CONDA_SHLVL=1
+export DEBIAN_FRONTEND=noninteractive
+export EDITOR=vi
+export FTP_PASSIVE=1
+export GREP_COLORS=32
+export GREP_OPTIONS=--color=auto
+export HACKPAGER=more
+export LC_ALL="C"
+export LESSOPEN="| /usr/bin/lesspipe %s"
+export LESS="-RX"
+export MAKEFLAGS="-j $(grep -c ^processor /proc/cpuinfo)"
+export MAMBA_EXE=/usr/bin/micromamba
+export MAMBA_ROOT_PREFIX="/sw/local/conda/${VERSION}"
+export PAGER=less
+export PATH=/sw/local/conda/${VERSION}/envs/hpgltools/bin:/sw/local/conda/${VERSION}/condabin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export R_ENABLE_JIT=3
+export R_MAX_NUM_DLLS=256
+
+
+## Instead of copying files within the setup section, one should use the files block, I think because
+## this is not run with elevated permissions.
+%files
+local/etc/bashrc /usr/local/etc/bashrc
+local/bin/runscript.sh /usr/local/bin/runscript.sh
+local/bin/setup_debian.sh /usr/local/bin/setup_debian.sh
+local/bin/setup_hpgltools.sh /usr/local/bin/setup_hpgltools.sh
+local/bin/setup_local.sh /usr/local/bin/setup_local.sh
+local/dotemacs.d/init.el /.emacs.d/init.el
+local/dotemacs.d/config.el /.emacs.d/config.el
+local/dotemacs.d/custom.el /.emacs.d/custom.el
+local/dotemacs.d/keybindings.el /.emacs.d/keybindings.el
+local/dotemacs.d/functions.el /.emacs.d/functions.el
+local/dotemacs.d/zw-company.el /.emacs.d/zw-company.el
+local/etc/template /sw/modules/template
+data/Makefile /data/Makefile
+data/00preprocessing.Rmd /data/00preprocessing.Rmd
+data/01index.Rmd /data/01index.Rmd
+data/preprocessing/cl_biopsies.tar /data/preprocessing/cl_biopsies.tar
+data/sample_sheets/all_samples.xlsx /data/sample_sheets/all_samples.xlsx
+
+
+%help
+String printed when "singularity help image.simg" is run.
+
+
+%labels
+Maintainer Ashton Trey Belew <abelew@umd.edu>
+Version v202310
+
+
+%post
+export VERSION=202310
+echo "Beginning installation with version: ${VERSION}."
+/usr/local/bin/setup_debian.sh
+/usr/local/bin/setup_hpgltools.sh
+/usr/local/bin/setup_local.sh
+
+
+%runscript
+/usr/local/bin/runscript.sh
+
+
+## The setup block will be used to copy material which I cannot acquire
+## automatically.  Ideally this should only be a sample sheet and potentially
+## count tables for now.  ** NOTE ** This section is run as root! So be careful.
+%setup
+mkdir -p ${SINGULARITY_ROOTFS}/usr/local/bin
+mkdir -p ${SINGULARITY_ROOTFS}/usr/local/etc
+mkdir -p ${SINGULARITY_ROOTFS}/.emacs.d
+mkdir -p ${SINGULARITY_ROOTFS}/data/preprocessing
+mkdir -p ${SINGULARITY_ROOTFS}/data/R
+mkdir -p ${SINGULARITY_ROOTFS}/data/cpm
+mkdir -p ${SINGULARITY_ROOTFS}/data/rpkm
+mkdir -p ${SINGULARITY_ROOTFS}/data/images
+mkdir -p ${SINGULARITY_ROOTFS}/data/figures
+mkdir -p ${SINGULARITY_ROOTFS}/data/rda
+mkdir -p ${SINGULARITY_ROOTFS}/data/excel
+mkdir -p ${SINGULARITY_ROOTFS}/data/sample_sheets
+mkdir -p ${SINGULARITY_ROOTFS}/output
+mkdir -p ${SINGULARITY_ROOTFS}/sw/local/conda
+mkdir -p ${SINGULARITY_ROOTFS}/sw/modules
+
+
+%test
+echo "Making sure hpgltools got installed."
+test -d "/data/hpgltools" || true
