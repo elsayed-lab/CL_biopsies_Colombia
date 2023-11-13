@@ -66,7 +66,9 @@ local/etc/template /sw/modules/template
 data/Makefile /data/Makefile
 data/00preprocessing.Rmd /data/00preprocessing.Rmd
 data/01index.Rmd /data/01index.Rmd
-data/preprocessing/cl_biopsies.tar /data/preprocessing/cl_biopsies.tar
+data/preprocessing/cl_biopsies_hg38_hisat.tar /data/preprocessing/cl_biopsies_hg38_hisat.tar
+data/preprocessing/cl_biopsies_lpanamensis_hisat.tar /data/preprocessing/cl_biopsies_lpanamensis_hisat.tar
+data/preprocessing/cl_biopsies_hg38_salmon.tar.xz /data/preprocessing/cl_biopsies_hg38_salmon.tar.xz
 data/sample_sheets/all_samples.xlsx /data/sample_sheets/all_samples.xlsx
 
 

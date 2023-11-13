@@ -3,8 +3,8 @@ start=$(pwd)
 ## Note that VERSION here is not the same as the version used to build the container.
 ## I _need_ to change one of them.
 export VERSION=$(date +%Y%m)
-inputs="00preprocessing.Rmd:01index.Rmd"
-counts="cl_biopsies.tar"
+inputs="00preprocessing.Rmd 01index.Rmd"
+counts="cl_biopsies_hg38_hisat.tar cl_biopsies_hg38_salmon.tar.xz cl_biopsies_lpanamensis_hisat.tar"
 
 function usage() {
     echo "This script by default will render every file in the list:"
@@ -29,7 +29,7 @@ function render_inputs() {
     echo "This script should render the Rmd files in the list:"
     echo "${inputs}."
     mkdir -p excel figures
-    for input in $(echo "${inputs}" | perl -pe "tr/:/ /"); do
+    for input in ${inputs}; do
         base=$(basename "$input" .Rmd)
         finished="${base}.finished"
         if [[ -f "${finished}" ]]; then
@@ -84,9 +84,11 @@ output_dir="/output/$(date +%Y%m%d)_outputs"
 mkdir -p "${output_dir}"
 ## Handle the default state if no parameters are provided.
 cd "${output_dir}" || exit
-echo "No colon-separated input file(s) given, analyzing the archived data."
+echo "No input file(s) given, analyzing the archived data."
 rsync -a /data/ .
-untarred=$(tar xaf "preprocessing/${counts}")
+for f in ${counts}; do
+    untarred=$(tar xaf "preprocessing/${f}")
+done
 
 if [[ -n "${untarred}" ]]; then
     echo "The tar command appears to have printed some output."

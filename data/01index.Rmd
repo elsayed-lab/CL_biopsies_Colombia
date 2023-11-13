@@ -23,16 +23,16 @@ output:
 
 <style type="text/css">
 body, td {
-font-size: 16px;
+  font-size: 16px;
 }
 code.r{
-font-size: 16px;
+  font-size: 16px;
 }
 pre {
-font-size: 16px
+  font-size: 16px
 }
 body .main-container {
-max-width: 1600px;
+  max-width: 1600px;
 }
 </style>
 
@@ -76,6 +76,21 @@ from the parasite.  As a result (at the time of this writing: 202310),
 those count tables are not included in the sample sheet (they are now,
 along with the salmon quantitations against hg38_100), and are not
 considered in this worksheet.
+
+# Changelog
+
+* 20231025: All the PCA plots were of non-filtered data.  I removed
+  two samples due to coverage, so the plots should not
+  include them.  While I am at it, rename a few variables to make
+  everything more consistent.  Also explicitly writing the
+  figure-pieces to the 'images/' directory, previously I just created
+  them on request.
+* 202309-202310: Copied the worksheet from my directory into the
+  container build tree, reorganized it, and added some text to
+  hopefully address queries/concerns from reviewers as well as clarify
+  some tasks performed.
+* 2022-2023: Copied Najib's worksheet to my directory, cleaned it up a
+  bit, and finished what I think are the likely analyses.
 
 I collected the available metadata into the sheet 'all_samples.xlsx'.
 
@@ -128,9 +143,11 @@ ontology downloader so that it is no longer susceptible to timeouts...
 
 Actually, I do not think I am using
 clusterProfiler/gostats/goseq/topgo in this document, perhaps
-therefore I should just exclude this block?
+therefore I should just exclude this block?  Yeah, it seems like there
+is a 50/50 chance that this will fail when run within the container,
+and I am currently not using this set of gene:GO mappings in this document.
 
-```{r}
+```{r, eval=FALSE}
 hs_go <- load_biomart_go(overwrite = TRUE)
 hs_go
 hs_go <- hs_go[["go"]]
@@ -150,8 +167,9 @@ of various potential conditions in the data.
 
 ## Color choices
 
-Many of the color choices are taken directly from another project
-with CIDEIM which also looks at host responses.
+Before we create the datastructures, I want to have the various color
+schemes in place.  Many of these color choices are taken directly from
+another project which also looks at host responses.
 
 ```{r}
 color_choices <- list(
@@ -209,7 +227,8 @@ color_choices <- list(
 
 The set of color choices demonstrates the complexity of the
 experimental design.  We are looking at combinations of time, outcome,
-species, and drug.  Inherent in these is an unspecified donor effect.
+species, and drug.  Inherent in all of these is an overarching donor
+effect.
 
 ## Initial dataset: Combine clinical outcome with visit
 
@@ -222,27 +241,42 @@ did not print out the filenames as it was reading them, usually it
 does.  I assume this is not a problem since the data looks fine, but
 this may warrant further exploration.
 
+The call to sanitize_expt_pData() tries to ensure that Excel does not
+mess things up with random spaces/capitalization in the metadata.
+
 ```{r}
 wellcome_outtime <- create_expt(metadata = samplesheet, gene_info = hs_annot,
                                 file_column = "hg38100hisatfile") %>%
   set_expt_batches(fact = "drug") %>%
   sanitize_expt_pData(spaces = TRUE)
 wellcome_outtime
+```
 
+The previous block creates the primary datastructure, everything from
+now on will either:
+
+* Add categories to it (the next block)
+* Set various categories to the primary factor of interest
+  (set_expt_conditions()/set_expt_batches())
+* Subset the data to highlight individual questions or remove the two
+  (I think two, double check this) low-coverage samples.
+* Normalize/analyze the above.
+
+The following block therefore creates a set of factors which are the
+concatenation of time+x where x is one of: outcome, drug, species.
+
+```{r}
 outcome_time <- paste0(pData(wellcome_outtime)[["clinicaloutcome"]], "_v",
                        pData(wellcome_outtime)[["visitnumber"]])
 wellcome_outtime <- set_expt_conditions(wellcome_outtime, fact = outcome_time,
                                         colors = color_choices[["cf_visit"]])
-pData(wellcome_outtime)[["visitnumber"]] <- paste0("v", pData(wellcome_outtime)[["visitnumber"]])
 
+pData(wellcome_outtime)[["visitnumber"]] <- paste0("v", pData(wellcome_outtime)[["visitnumber"]])
+pData(wellcome_outtime)[["outcome_visit"]] <- outcome_time
 pData(wellcome_outtime)[["drug_visit"]] <- paste0(pData(wellcome_outtime)[["drug"]], "_",
                                                   pData(wellcome_outtime)[["visitnumber"]])
 pData(wellcome_outtime)[["species_visit"]] <- paste0(pData(wellcome_outtime)[["infectingspecies"]], "_",
                                                      pData(wellcome_outtime)[["visitnumber"]])
-
-wellcome_outtime <- sanitize_expt_pData(
-  wellcome_outtime, spaces = TRUE,
-  columns = c("clinicaloutcome", "visitnumber", "infectingspecies", "drug"))
 ```
 
 ## Check samples
@@ -253,7 +287,10 @@ coverage.
 
 Random aside: I have some nifty code which tries to autodetect when to
 color the text in the colored bars white or black.  The purple/pink
-color tricks that code into thinking it is dark enough to be colored white.
+color tricks that code into thinking it is dark enough to be colored
+white.
+
+* FIXME plot_libsize() text color heuristic.
 
 ```{r}
 plot_legend(wellcome_outtime)
@@ -263,22 +300,34 @@ plot_nonzero(wellcome_outtime, plot_labels = "repel")
 wellcome_filtered <- subset_expt(wellcome_outtime, nonzero = 15000)
 ```
 
+## Write all the sample data
+
+The following writes out the data in two files, one before and after
+filtering for samples with less than 15,000 observed genes.
+
+```{r}
+written <- write_expt(wellcome_outtime,
+                      excel = glue("excel/CL_biopsies_all_data-v{ver}.xlsx"))
+written <- write_expt(wellcome_filtered,
+                      excel = glue("excel/CL_biopsies_filtered_data-v{ver}.xlsx"))
+```
+
 Looking at the nonzero plot, it seems that 15k genes is a reasonable
 cutoff, which would remove 2 samples.  So, for the moment I will split
 the data up into two sets, pre/post removal.
 
 ## Upload CPM values
 
-Lina asked for a copy of the data as CPM.
+Lina asked for a CSV copy of the data as CPM.
 
 ```{r}
 wellcome_cpm <- normalize_expt(wellcome_filtered, filter = TRUE, convert = "cpm")
 wellcome_cpm_mtrx <- exprs(wellcome_cpm)
-wellcome_cpm_write <- write.csv(x = wellcome_cpm_mtrx, file = "excel/wellcome_fc.csv")
+wellcome_cpm_write <- write.csv(x = wellcome_cpm_mtrx, file = "excel/CL_biopsies_filtered_cpm.csv")
 
 wellcome_scpm <- normalize_expt(wellcome_filtered, filter = TRUE, convert = "cpm", batch = "svaseq")
 wellcome_scpm_mtrx <- exprs(wellcome_scpm)
-wellcome_scpm_write <- write.csv(x = wellcome_cpm_mtrx, file = "excel/wellcome_fc_cpm_sva.csv")
+wellcome_scpm_write <- write.csv(x = wellcome_cpm_mtrx, file = "excel/CL_biopsies_filtered_cpm_sva.csv")
 ```
 
 ## Check samples
@@ -302,8 +351,8 @@ so that we may play with both if we want.
 wellcome_donor <- set_expt_conditions(wellcome_outtime, fact = "donor",
                                       colors = color_choices)
 
-wellcome_filtdonor <- set_expt_conditions(wellcome_filtered, fact = "donor",
-                                          colors = color_choices)
+wellcome_donor_filt <- set_expt_conditions(wellcome_filtered, fact = "donor",
+                                           colors = color_choices)
 ```
 
 ## Only visit
@@ -315,7 +364,7 @@ samples for each visit, except v1/v3 which are missing 1 each.
 wellcome_time <- set_expt_conditions(wellcome_outtime, fact = "visitnumber",
                                      colors = color_choices[["visit"]])
 
-wellcome_filttime <- set_expt_conditions(wellcome_filtered, fact = "visitnumber",
+wellcome_time_filt <- set_expt_conditions(wellcome_filtered, fact = "visitnumber",
                                          colors = color_choices[["visit"]])
 ```
 
@@ -344,8 +393,8 @@ wellcome_drug <- set_expt_conditions(wellcome_outtime, fact = "drug",
                                      colors = color_choices[["drug"]]) %>%
   set_expt_batches(fact = "visitnumber")
 
-wellcome_drugfilt <- set_expt_conditions(wellcome_filtered, fact = "drug",
-                                         colors = color_choices[["drug"]]) %>%
+wellcome_drug_filt <- set_expt_conditions(wellcome_filtered, fact = "drug",
+                                          colors = color_choices[["drug"]]) %>%
   set_expt_batches(fact = "visitnumber")
 ```
 
@@ -358,8 +407,8 @@ wellcome_parasite <- set_expt_conditions(wellcome_outtime, fact = "infectingspec
                                          colors = color_choices[["species"]]) %>%
   set_expt_batches(fact = "visitnumber")
 
-wellcome_parafilt <- set_expt_conditions(wellcome_filtered, fact = "infectingspecies",
-                                         colors = color_choices[["species"]]) %>%
+wellcome_parasite_filt <- set_expt_conditions(wellcome_filtered, fact = "infectingspecies",
+                                              colors = color_choices[["species"]]) %>%
   set_expt_batches(fact = "visitnumber")
 ```
 
@@ -372,7 +421,7 @@ timepoints.
 
 ```{r}
 drug_visit_species_cf <- plot_meta_sankey(
-  wellcome_outtime, factors = c("drug", "visitnumber", "clinicaloutcome", "infectingspecies"),
+  wellcome_filtered, factors = c("drug", "visitnumber", "clinicaloutcome", "infectingspecies"),
   color_choices = color_choices)
 drug_visit_species_cf
 ```
@@ -386,15 +435,15 @@ trying variance partition with the 4 primary factors will fail, but
 let us see...
 
 ```{r}
-all_varpart_donor <- simple_varpart(
+varpart_donor <- simple_varpart(
   wellcome_filtered,
   factors = c("donor", "visitnumber"))
-all_varpart_donor
+varpart_donor
 
-all_varpart_dvic <- simple_varpart(
+varpart_dvic <- simple_varpart(
   wellcome_filtered,
   factors = c("drug", "visitnumber", "infectingspecies", "clinicaloutcome"))
-all_varpart_dvic
+varpart_dvic
 ```
 
 To my eyes, it appears that donor is dominant factor,
@@ -409,8 +458,8 @@ Let us ask if there are categories associated with the genes
 associated with each of these categories and see if they 'make sense'.
 
 ```{r}
-top_300_donor_genes_idx <- order(all_varpart_donor[["fitted_df"]][["donor"]])
-top_300_donor_genes <- tail(all_varpart_donor[["fitted_df"]][top_300_donor_genes_idx, ], n = 300)
+top_300_donor_genes_idx <- order(varpart_donor[["fitted_df"]][["donor"]])
+top_300_donor_genes <- tail(varpart_donor[["fitted_df"]][top_300_donor_genes_idx, ], n = 300)
 summary(top_300_donor_genes)
 donor_genes_gp <- simple_gprofiler(rownames(top_300_donor_genes))
 donor_genes_gp
@@ -434,8 +483,8 @@ Visit also is dominated by variance which is explicitly what one would expect:
 wound healing.
 
 ```{r}
-top_300_visit_genes_idx <- order(all_varpart_dvic[["fitted_df"]][["visitnumber"]])
-top_300_visit_genes <- tail(all_varpart_dvic[["fitted_df"]][top_300_visit_genes_idx, ], n = 300)
+top_300_visit_genes_idx <- order(varpart_dvic[["fitted_df"]][["visitnumber"]])
+top_300_visit_genes <- tail(varpart_dvic[["fitted_df"]][top_300_visit_genes_idx, ], n = 300)
 summary(top_300_visit_genes)
 visit_genes_gp <- simple_gprofiler(rownames(top_300_visit_genes))
 visit_genes_gp
@@ -449,8 +498,8 @@ given that I am unaware of m/any experiments which explicitly compare
 antimonial treatments with respect to transcriptional profile.
 
 ```{r}
-top_300_drug_genes_idx <- order(all_varpart_dvic[["fitted_df"]][["drug"]])
-top_300_drug_genes <- tail(all_varpart_dvic[["fitted_df"]][top_300_drug_genes_idx, ], n = 300)
+top_300_drug_genes_idx <- order(varpart_dvic[["fitted_df"]][["drug"]])
+top_300_drug_genes <- tail(varpart_dvic[["fitted_df"]][top_300_drug_genes_idx, ], n = 300)
 summary(top_300_drug_genes)
 drug_genes_gp <- simple_gprofiler(rownames(top_300_drug_genes))
 drug_genes_gp
@@ -468,8 +517,8 @@ would assume that the human transcriptome has pretty similar responses
 to the two parasites, exacerbating this confounder.
 
 ```{r}
-top_300_species_genes_idx <- order(all_varpart_dvic[["fitted_df"]][["infectingspecies"]])
-top_300_species_genes <- tail(all_varpart_dvic[["fitted_df"]][top_300_species_genes_idx, ], n = 300)
+top_300_species_genes_idx <- order(varpart_dvic[["fitted_df"]][["infectingspecies"]])
+top_300_species_genes <- tail(varpart_dvic[["fitted_df"]][top_300_species_genes_idx, ], n = 300)
 summary(top_300_species_genes)
 species_genes_gp <- simple_gprofiler(rownames(top_300_species_genes))
 species_genes_gp
@@ -484,9 +533,15 @@ to have reliable overrepresentation results even with limited
 information.  Thus, when I look at the bar/dot plot the categories look
 interesting.
 
+The following block provides an example of one of the fun things my
+gProfiler2 function does: it coerces the gprofiler output to the
+datastructure used by clusterProfiler and thus may be plotted with the
+various functions in the 'enrichplot' package.  It also provides a
+copy of the cute interactive plots produced by gprofiler.
+
 ```{r}
-top_300_cf_genes_idx <- order(all_varpart_dvic[["fitted_df"]][["clinicaloutcome"]])
-top_300_cf_genes <- tail(all_varpart_dvic[["fitted_df"]][top_300_cf_genes_idx, ], n = 300)
+top_300_cf_genes_idx <- order(varpart_dvic[["fitted_df"]][["clinicaloutcome"]])
+top_300_cf_genes <- tail(varpart_dvic[["fitted_df"]][top_300_cf_genes_idx, ], n = 300)
 summary(top_300_cf_genes)
 cf_genes_gp <- simple_gprofiler(rownames(top_300_cf_genes))
 cf_genes_gp
@@ -496,38 +551,26 @@ enrichplot::dotplot(cf_genes_gp$GO_enrich)
 # The samples' distribution is similar without 2 samples
 
 Here are the PCA results before/after removing the two samples that I
-called shenanigans on.  They are quite similar.
+called shenanigans on.  They are quite similar.  The most notable
+difference is the weirdo failure visit 3 sample on the left goes away.
 
 ```{r}
 wellcome_outtime_norm <- normalize_expt(wellcome_outtime, filter = TRUE,
                                         convert = "cpm", transform = "log2", norm = "quant")
-plot_pca(wellcome_outtime_norm)
+pre_filter_pca <- plot_pca(wellcome_outtime_norm)
+pp(file = "images/all_samples_norm_pca.svg")
+pre_filter_pca$plot
+dev.off()
+pre_filter_pca
 
 wellcome_outfilt_norm <- normalize_expt(wellcome_filtered, filter = TRUE,
                                         convert = "cpm", transform = "log2", norm = "quant")
-plot_pca(wellcome_outfilt_norm)
+post_filter_pca <- plot_pca(wellcome_outfilt_norm)
+pp(file = "images/filtered_samples_norm_pca.svg")
+post_filter_pca$plot
+dev.off()
+post_filter_pca
 ```
-
-# GSVA
-
-From my perspective, it seems that the most interesting GSVA
-comparison is to look for scores changing between the cure and fail
-samples.  The following block therefore passes the raw expression data
-and performs the gene set variance analysis of it against the mSigDB
-C2 set of categories by default.  We can pretty easily change the
-mSigDB release/category set; except I would need download the dataset
-to the container to use a newer revision.
-
-```{r}
-wt_gsva <- simple_gsva(wellcome_outcome_filt, signature_category = "c7")
-wt_gsva
-
-wt_gsva_sig <- get_sig_gsva_categories(wt_gsva, excel = "excel/wellcome_filter_outcome_gsva.xlsx")
-wt_gsva_sig
-```
-
-Hmm, did I get confused, is C7 what I thought it was?  Yeah, it is the
-immunologic signature sets.
 
 # Visualize Various PCA
 
@@ -537,91 +580,157 @@ likely to do one plot before and one after using sva.
 
 ## By visit
 
-```{r}
-wellcome_time_norm <- normalize_expt(wellcome_filttime, norm = "quant", convert = "cpm",
-                                     filter = TRUE, transform = "log2")
-plot_pca(wellcome_time_norm)
+I think the pattern of samples by visit is pretty or satisfying in a
+'hey, these things have some internal sense' way.  I guess modifying
+the counts with surrogates from sva makes it a little bit clearer?  It
+does increase the PC1 variance a bit I suppose.
 
-wellcome_time_nb <- normalize_expt(wellcome_filttime, convert = "cpm",
+```{r}
+wellcome_time_norm <- normalize_expt(wellcome_time_filt, norm = "quant", convert = "cpm",
+                                     filter = TRUE, transform = "log2")
+time_norm_pca <- plot_pca(wellcome_time_norm)
+pp(file = "images/time_norm_pca.svg")
+time_norm_pca$plot
+dev.off()
+time_norm_pca
+
+wellcome_time_nb <- normalize_expt(wellcome_time_filt, convert = "cpm",
                                    batch = "svaseq", filter = TRUE, transform = "log2")
-plot_pca(wellcome_time_nb)
+time_nb_pca <- plot_pca(wellcome_time_nb)
+pp(file = "images/time_nb_pca.svg")
+time_nb_pca$plot
+dev.off()
+time_nb_pca
 ```
 
 ## Cure/Fail
 
+In contrast, the ability of sva to determine variance which is related
+to clinical outcome is _very_ limited.  The resulting PCA plot is
+a bit of a mess.
+
 ```{r}
 wellcome_outcome_norm <- normalize_expt(wellcome_outcome_filt, norm = "quant", convert = "cpm",
                                         filter = TRUE, transform = "log2")
-plot_pca(wellcome_outcome_norm, plot_labels = FALSE)
+outcome_norm_pca <- plot_pca(wellcome_outcome_norm, plot_labels = FALSE)
+pp(file = "images/outcome_norm_pca.svg")
+outcome_norm_pca$plot
+dev.off()
+outcome_norm_pca
 
 wellcome_outcome_nb <- normalize_expt(wellcome_outcome_filt, convert = "cpm",
                                       batch = "svaseq", filter = TRUE, transform = "log2")
-plot_pca(wellcome_outcome_nb)
+outcome_nb_pca <- plot_pca(wellcome_outcome_nb)
+pp(file = "images/outcome_nb_pca.svg")
+outcome_nb_pca$plot
+dev.off()
+outcome_nb_pca
 ```
-
-Wow, there really isn't much C/F variance, is there.
 
 ## Drug
 
-```{r}
-wellcome_drug_norm <- normalize_expt(wellcome_drugfilt, norm = "quant", convert = "cpm",
-                                     filter = TRUE, transform = "log2")
-plot_pca(wellcome_drug_norm)
+At first glance, it at least appears possible that we can get a handle
+on differences between the two drug treatment regimes; but I kind of
+think that is a trick played by our eyes.  Glancing at the plot from
+sva, it appears to disagree with me; at least this recapitulates the
+variancePartition result I think.
 
-wellcome_drug_nb <- normalize_expt(wellcome_drugfilt, convert = "cpm",
+```{r}
+wellcome_drug_norm <- normalize_expt(wellcome_drug_filt, norm = "quant", convert = "cpm",
+                                     filter = TRUE, transform = "log2")
+drug_norm_pca <- plot_pca(wellcome_drug_norm)
+pp(file = "images/drug_norm_pca.svg")
+drug_norm_pca$plot
+dev.off()
+drug_norm_pca
+
+wellcome_drug_nb <- normalize_expt(wellcome_drug_filt, convert = "cpm",
                                    batch = "svaseq", filter = TRUE, transform = "log2")
-plot_pca(wellcome_drug_nb)
+drug_nb_pca <- plot_pca(wellcome_drug_nb)
+pp(file = "images/drug_nb_pca.svg")
+drug_nb_pca$plot
+dev.off()
+drug_nb_pca
 ```
 
 ### Separate drug treatment by time
 
 Conversely, it is likely that we want to separate and/or combine the
-various factors with the visit.
-
-#### Single factor all samples
+various factors with the visit.  In the following block we will use
+the factor which is a combination of drug and visit.
 
 ```{r}
-drugtime <- set_expt_conditions(wellcome_outtime, fact = "drug_visit",
-                                colors = color_choices[["drug_visit"]]) %>%
+drugtime <- set_expt_conditions(wellcome_filtered, fact = "drug_visit",
+                                     colors = color_choices[["drug_visit"]]) %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 drugtime_norm <- normalize_expt(drugtime, norm = "quant", convert = "cpm",
                                 transform = "log2", filter = TRUE)
-plot_pca(drugtime_norm)
+drugtime_norm_pca <- plot_pca(drugtime_norm)
+pp(file = "images/drugtime_norm_pca.svg")
+drugtime_norm_pca$plot
+dev.off()
+drugtime_norm_pca
 
 drugtime_nb <- normalize_expt(drugtime, batch = "svaseq", convert = "cpm",
                               transform = "log2", filter = TRUE)
-plot_pca(drugtime_nb)
+drugtime_nb_pca <- plot_pca(drugtime_nb)
+pp(file = "images/drugtime_nb_pca.svg")
+drugtime_nb_pca$plot
+dev.off()
+drugtime_nb_pca
 ```
 
 #### Visit 1
 
 One interpretation of some queries from reviewers would be to replot
 the various PCAs with the visits separated from each other.  I am not
-sure if that is the correct interpretation, but here it is
-nonetheless.
+completely sure that is the correct interpretation, but here it is.
 
 ```{r}
 drug_v1 <- subset_expt(drugtime, subset = "visitnumber=='v1'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 drug_v1_norm <- normalize_expt(drug_v1, norm = "quant", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(drug_v1_norm)
+drug_v1_norm_pca <- plot_pca(drug_v1_norm)
+pp(file = "images/drug_v1_norm_pca.svg")
+drug_v1_norm_pca$plot
+dev.off()
+drug_v1_norm_pca
+
 drug_v1_nb <- normalize_expt(drug_v1, batch = "svaseq", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(drug_v1_nb)
+drug_v1_nb_pca <- plot_pca(drug_v1_nb)
+pp(file = "images/drug_v1_nb_pca.svg")
+drug_v1_nb_pca$plot
+dev.off()
+drug_v1_nb_pca
 ```
 
 #### Visit 2
 
+I would like to have something useful to say before every block.  I don't.
+
 ```{r}
 drug_v2 <- subset_expt(drugtime, subset = "visitnumber=='v2'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 drug_v2_norm <- normalize_expt(drug_v2, norm = "quant", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(drug_v2_norm)
+drug_v2_norm_pca <- plot_pca(drug_v2_norm)
+pp(file = "images/drug_v2_norm_pca.svg")
+drug_v2_norm_pca$plot
+dev.off()
+drug_v2_norm_pca
+
 drug_v2_nb <- normalize_expt(drug_v2, batch = "svaseq", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(drug_v2_nb)
+                             filter = TRUE, transform = "log2")
+drug_v2_nb_pca <- plot_pca(drug_v2_nb)
+pp(file = "images/drug_v2_nb_pca.svg")
+drug_v2_nb_pca$plot
+dev.off()
+drug_v2_nb_pca
 ```
 
 #### Visit 3
@@ -629,26 +738,140 @@ plot_pca(drug_v2_nb)
 ```{r}
 drug_v3 <- subset_expt(drugtime, subset = "visitnumber=='v3'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 drug_v3_norm <- normalize_expt(drug_v3, norm = "quant", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(drug_v3_norm)
+drug_v3_norm_pca <- plot_pca(drug_v3_norm)
+pp(file = "images/drug_v3_norm_pca.svg")
+drug_v3_norm_pca$plot
+dev.off()
+
 drug_v3_nb <- normalize_expt(drug_v3, batch = "svaseq", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(drug_v3_nb)
+drug_v3_nb_pca <- plot_pca(drug_v3_nb)
+pp(file = "images/drug_v3_nb_pca.svg")
+drug_v3_nb_pca$plot
+dev.off()
+drug_v3_nb_pca
 ```
 
-## Outcome and time
-
-Now let us combine C/F, time and repeat the process.
+### Outcome alone
 
 ```{r}
-wellcome_outtime_norm <- normalize_expt(wellcome_filtered, norm = "quant", convert = "cpm",
-                                        filter = TRUE, transform = "log2")
-plot_pca(wellcome_outtime_norm)
+outcome <- set_expt_conditions(wellcome_filtered, fact = "clinicaloutcome",
+                               colors = color_choices[["clinicaloutcome"]]) %>%
+  set_expt_batches(fact = "drug")
 
-wellcome_outtime_nb <- normalize_expt(wellcome_filtered, convert = "cpm",
+outcome_norm <- normalize_expt(outcome, norm = "quant", convert = "cpm",
+                               transform = "log2", filter = TRUE)
+outcome_norm_pca <- plot_pca(outcome_norm)
+pp(file = "images/outcome_norm_pca.svg")
+outcome_norm_pca$plot
+dev.off()
+outcome_norm_pca
+
+outcome_nb <- normalize_expt(outcome, batch = "svaseq", convert = "cpm",
+                             transform = "log2", filter = TRUE)
+outcome_nb_pca <- plot_pca(outcome_nb)
+pp(file = "images/outcome_nb_pca.svg")
+outcome_nb_pca$plot
+dev.off()
+outcome_nb_pca
+```
+
+#### Visit 1
+
+```{r}
+outcome_v1 <- subset_expt(outcome, subset = "visitnumber=='v1'")
+
+outcome_v1_norm <- normalize_expt(outcome_v1, norm = "quant", convert = "cpm",
+                                  filter = TRUE, transform = "log2")
+outcome_v1_norm_pca <- plot_pca(outcome_v1_norm)
+pp(file = "images/outcome_v1_norm_pca.svg")
+outcome_v1_norm_pca$plot
+dev.off()
+outcome_v1_norm_pca
+
+outcome_v1_nb <- normalize_expt(outcome_v1, batch = "svaseq", convert = "cpm",
+                                filter = TRUE, transform = "log2")
+outcome_v1_nb_pca <- plot_pca(outcome_v1_nb)
+pp(file = "images/outcome_v1_nb_pca.svg")
+outcome_v1_nb_pca$plot
+dev.off()
+outcome_v1_nb_pca
+```
+
+#### Visit 2
+
+I would like to have something useful to say before every block.  I don't.
+
+```{r}
+outcome_v2 <- subset_expt(outcome, subset = "visitnumber=='v2'") %>%
+  set_expt_batches(fact = "clinicaloutcome")
+
+outcome_v2_norm <- normalize_expt(outcome_v2, norm = "quant", convert = "cpm",
+                                  filter = TRUE, transform = "log2")
+outcome_v2_norm_pca <- plot_pca(outcome_v2_norm)
+pp(file = "images/outcome_v2_norm_pca.svg")
+outcome_v2_norm_pca$plot
+dev.off()
+outcome_v2_norm_pca
+
+outcome_v2_nb <- normalize_expt(outcome_v2, batch = "svaseq", convert = "cpm",
+                             filter = TRUE, transform = "log2")
+outcome_v2_nb_pca <- plot_pca(outcome_v2_nb)
+pp(file = "images/outcome_v2_nb_pca.svg")
+outcome_v2_nb_pca$plot
+dev.off()
+outcome_v2_nb_pca
+```
+
+#### Visit 3
+
+```{r}
+outcome_v3 <- subset_expt(outcome, subset = "visitnumber=='v3'") %>%
+  set_expt_batches(fact = "clinicaloutcome")
+
+outcome_v3_norm <- normalize_expt(outcome_v3, norm = "quant", convert = "cpm",
+                               filter = TRUE, transform = "log2")
+outcome_v3_norm_pca <- plot_pca(outcome_v3_norm)
+pp(file = "images/outcome_v3_norm_pca.svg")
+outcome_v3_norm_pca$plot
+dev.off()
+outcome_v3_norm_pca
+
+outcome_v3_nb <- normalize_expt(outcome_v3, batch = "svaseq", convert = "cpm",
+                                filter = TRUE, transform = "log2")
+outcome_v3_nb_pca <- plot_pca(outcome_v3_nb)
+pp(file = "images/outcome_v3_nb_pca.svg")
+outcome_v3_nb_pca$plot
+dev.off()
+outcome_v3_nb_pca
+```
+
+### Outcome and time
+
+Repeat the above process, but this time using clinical outcome and
+time combined.
+
+```{r}
+wellcome_outtime <- set_expt_conditions(wellcome_filtered, fact = "outcome_visit")
+
+wellcome_outtime_norm <- normalize_expt(wellcome_outtime, norm = "quant", convert = "cpm",
+                                        filter = TRUE, transform = "log2")
+outtime_norm_pca <- plot_pca(wellcome_outtime_norm)
+pp(file = "images/outtime_norm_pca.svg")
+outtime_norm_pca$plot
+dev.off()
+outtime_norm_pca
+
+wellcome_outtime_nb <- normalize_expt(wellcome_outtime, convert = "cpm",
                                       batch = "svaseq", filter = TRUE, transform = "log2")
-plot_pca(wellcome_outtime_nb)
+outtime_nb_pca <- plot_pca(wellcome_outtime_nb)
+pp(file = "images/outtime_nb_pca.svg")
+outtime_nb_pca$plot
+dev.off()
+outtime_nb_pca
 ```
 
 #### Visit 1
@@ -656,13 +879,20 @@ plot_pca(wellcome_outtime_nb)
 ```{r}
 outtime_v1 <- subset_expt(wellcome_outtime, subset = "visitnumber=='v1'") %>%
   set_expt_batches(fact = "drug")
+
 outtime_v1_norm <- normalize_expt(outtime_v1, norm = "quant", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v1_norm)
+                                  filter = TRUE, transform = "log2")
+outtime_v1_norm_pca <- plot_pca(outtime_v1_norm)
+pp(file = "images/outtime_v1_norm_pca.svg")
+outtime_v1_norm_pca$plot
+dev.off()
+outtime_v1_norm_pca$plot
 
 outtime_v1_nb <- normalize_expt(outtime_v1, batch = "svaseq", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v1_nb)
+                                filter = TRUE, transform = "log2")
+outtime_v1_nb_pca <- plot_pca(outtime_v1_nb)
+pp(file = "images/outtime_v1_nb_pca.svg")
+outtime_v1_nb_pca
 ```
 
 #### Visit 2
@@ -670,13 +900,20 @@ plot_pca(outtime_v1_nb)
 ```{r}
 outtime_v2 <- subset_expt(wellcome_outtime, subset = "visitnumber=='v2'") %>%
   set_expt_batches(fact = "drug")
+
 outtime_v2_norm <- normalize_expt(outtime_v2, norm = "quant", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v2_norm)
+                                  filter = TRUE, transform = "log2")
+outtime_v2_norm_pca <- plot_pca(outtime_v2_norm)
+pp(file = "images/outtime_v2_norm_pca.svg")
+outtime_v2_norm_pca$plot
+dev.off()
+outtime_v2_norm_pca$plot
 
 outtime_v2_nb <- normalize_expt(outtime_v2, batch = "svaseq", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v2_nb)
+                                filter = TRUE, transform = "log2")
+outtime_v2_nb_pca <- plot_pca(outtime_v2_nb)
+pp(file = "images/outtime_v2_nb_pca.svg")
+outtime_v2_nb_pca
 ```
 
 #### Visit 3
@@ -684,20 +921,25 @@ plot_pca(outtime_v2_nb)
 ```{r}
 outtime_v3 <- subset_expt(wellcome_outtime, subset = "visitnumber=='v3'") %>%
   set_expt_batches(fact = "drug")
+
 outtime_v3_norm <- normalize_expt(outtime_v3, norm = "quant", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v3_norm)
+                                  filter = TRUE, transform = "log2")
+outtime_v3_norm_pca <- plot_pca(outtime_v3_norm)
+pp(file = "images/outtime_v3_norm_pca.svg")
+outtime_v3_norm_pca$plot
+dev.off()
+outtime_v3_norm_pca$plot
 
 outtime_v3_nb <- normalize_expt(outtime_v3, batch = "svaseq", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(outtime_v3_nb)
+                                filter = TRUE, transform = "log2")
+outtime_v3_nb_pca <- plot_pca(outtime_v3_nb)
+pp(file = "images/outtime_v3_nb_pca.svg")
+outtime_v3_nb_pca
 ```
 
 ## Parasite Species
 
 ### Separate species by time
-
-#### Single factor all samples
 
 ```{r}
 speciestime <- set_expt_conditions(wellcome_outtime, fact = "species_visit",
@@ -706,10 +948,19 @@ speciestime <- set_expt_conditions(wellcome_outtime, fact = "species_visit",
 
 speciestime_norm <- normalize_expt(speciestime, norm = "quant", convert = "cpm",
                                    transform = "log2", filter = TRUE)
-plot_pca(speciestime_norm)
+speciestime_norm_pca <- plot_pca(speciestime_norm)
+pp(file = "images/speciestime_norm_pca.svg")
+speciestime_norm_pca$plot
+dev.off()
+speciestime_norm_pca
+
 speciestime_nb <- normalize_expt(speciestime, batch = "svaseq", convert = "cpm",
-                                   transform = "log2", filter = TRUE)
-plot_pca(speciestime_nb)
+                                 transform = "log2", filter = TRUE)
+speciestime_nb_pca <- plot_pca(speciestime_nb)
+pp(file = "images/speciestime_nb_pca.svg")
+speciestime_nb_pca$plot
+dev.off()
+speciestime_nb_pca
 ```
 
 #### Visit 1
@@ -717,12 +968,22 @@ plot_pca(speciestime_nb)
 ```{r}
 species_v1 <- subset_expt(speciestime, subset = "visitnumber=='v1'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 species_v1_norm <- normalize_expt(species_v1, norm = "quant", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(species_v1_norm)
+species_v1_norm_pca <- plot_pca(species_v1_norm)
+pp(file = "images/species_v1_norm_pca.svg")
+species_v1_norm_pca$plot
+dev.off()
+species_v1_norm_pca
+
 species_v1_nb <- normalize_expt(species_v1, batch = "svaseq", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(species_v1_nb)
+species_v1_nb_pca <- plot_pca(species_v1_nb)
+pp(file = "images/species_v1_nb_pca.svg")
+species_v1_nb_pca$plot
+dev.off()
+species_v1_nb_pca
 ```
 
 #### Visit 2
@@ -730,12 +991,22 @@ plot_pca(species_v1_nb)
 ```{r}
 species_v2 <- subset_expt(speciestime, subset = "visitnumber=='v2'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 species_v2_norm <- normalize_expt(species_v2, norm = "quant", convert = "cpm",
                                   filter = TRUE, transform = "log2")
-plot_pca(species_v2_norm)
+species_v2_norm_pca <- plot_pca(species_v2_norm)
+pp(file = "images/species_v2_norm_pca.svg")
+species_v2_norm_pca$plot
+dev.off()
+species_v2_norm_pca
+
 species_v2_nb <- normalize_expt(species_v2, batch = "svaseq", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(species_v2_nb)
+species_v2_nb_pca <- plot_pca(species_v2_nb)
+pp(file = "images/species_v2_nb_pca.svg")
+species_v2_nb_pca$plot
+dev.off()
+species_v2_nb_pca
 ```
 
 #### Visit 3
@@ -743,22 +1014,31 @@ plot_pca(species_v2_nb)
 ```{r}
 species_v3 <- subset_expt(speciestime, subset = "visitnumber=='v3'") %>%
   set_expt_batches(fact = "clinicaloutcome")
+
 species_v3_norm <- normalize_expt(species_v3, norm = "quant", convert = "cpm",
-                               filter = TRUE, transform = "log2")
-plot_pca(species_v3_norm)
+                                  filter = TRUE, transform = "log2")
+species_v3_norm_pca <- plot_pca(species_v3_norm)
+pp(file = "images/species_v3_norm_pca.svg")
+species_v3_norm_pca$plot
+dev.off()
+
 species_v3_nb <- normalize_expt(species_v3, batch = "svaseq", convert = "cpm",
                                filter = TRUE, transform = "log2")
-plot_pca(species_v3_nb)
+species_v3_nb_pca <- plot_pca(species_v3_nb)
+pp(file = "images/species_v3_nb_pca.svg")
+species_v3_nb_pca$plot
+dev.off()
+species_v3_nb_pca
 ```
 
 #### Back to everything
 
 ```{r}
-wellcome_parasite_norm <- normalize_expt(wellcome_parafilt, norm = "quant", convert = "cpm",
+wellcome_parasite_norm <- normalize_expt(wellcome_parasite_filt, norm = "quant", convert = "cpm",
                                          filter = TRUE, transform = "log2")
 plot_pca(wellcome_parasite_norm)
 
-wellcome_parasite_nb <- normalize_expt(wellcome_parafilt, norm = "quant", convert = "cpm",
+wellcome_parasite_nb <- normalize_expt(wellcome_parasite_filt, norm = "quant", convert = "cpm",
                                        batch = "svaseq", filter = TRUE, transform = "log2")
 plot_pca(wellcome_parasite_nb)
 ```
@@ -777,6 +1057,9 @@ will be performed once with SVA estimates in the model, and once with
 the drug treatment as the batch factor.
 
 ## Outcome and time
+
+One thing to recall, my sanitizer removes punctuation from
+concatenated factors; so 'cure_v2' turns into 'curev2'.
 
 ## The contrasts of interest
 
@@ -804,19 +1087,22 @@ oddly less information with SVA.
 
 One of the review comments seemed to me to suggest that using the
 variancePartition dream method might be useful.  I am not certain if
-that is currently enabled.  I definitely got it working, though.
+that is currently enabled.  I definitely got it working, though.  Also
+note that filter in this context is on a gene basis, not sample.
 
 ```{r}
 outtime_sva_de <- all_pairwise(wellcome_filtered, model_batch = "svaseq", filter = TRUE)
 outtime_sva_de
+
 outtime_sva_table <- combine_de_tables(
   outtime_sva_de,
   keepers = outtime_keepers,
-  excel = glue("excel/wellcome_outtime_table_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outtime_table_sva-v{ver}.xlsx"))
 outtime_sva_table
+
 outtime_sva_sig <- extract_significant_genes(
   outtime_sva_table,
-  excel = glue("excel/wellcome_outtime_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outtime_sig_sva-v{ver}.xlsx"))
 outtime_sva_sig
 ```
 
@@ -825,14 +1111,16 @@ outtime_sva_sig
 ```{r}
 outtime_batch_de <- all_pairwise(wellcome_filtered, model_batch = TRUE, filter = TRUE)
 outtime_batch_de
+
 outtime_batch_table <- combine_de_tables(
   outtime_batch_de,
   keepers = outtime_keepers,
-  excel = glue("excel/wellcome_outtime_table_batch-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outtime_table_batch-v{ver}.xlsx"))
 outtime_batch_table
+
 outtime_batch_sig <- extract_significant_genes(
   outtime_batch_table,
-  excel = glue("excel/wellcome_outtime_sig_batch-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outtime_sig_batch-v{ver}.xlsx"))
 outtime_batch_sig
 ```
 
@@ -869,38 +1157,40 @@ time_keepers <- list(
 ### SVA
 
 ```{r}
-time_sva_de <- all_pairwise(wellcome_filttime, model_batch = "svaseq", filter = TRUE)
+time_sva_de <- all_pairwise(wellcome_time_filt, model_batch = "svaseq", filter = TRUE)
 time_sva_de
+
 time_sva_table <- combine_de_tables(
   time_sva_de,
   keepers = time_keepers,
-  excel = glue("excel/wellcome_time_table_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_time_table_sva-v{ver}.xlsx"))
 time_sva_table
+
 time_sva_sig <- extract_significant_genes(
   time_sva_table,
-  excel = glue("excel/wellcome_time_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_time_sig_sva-v{ver}.xlsx"))
 time_sva_sig
 ```
 
 ### Batch
 
 ```{r}
-time_batch_de <- all_pairwise(wellcome_filttime, model_batch = "batchseq", filter = TRUE)
+time_batch_de <- all_pairwise(wellcome_time_filt, model_batch = "batchseq", filter = TRUE)
 time_batch_de
+
 time_batch_table <- combine_de_tables(
   time_batch_de,
   keepers = time_keepers,
-  excel = glue("excel/wellcome_time_table_batch-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_time_table_batch-v{ver}.xlsx"))
 time_batch_table
+
 time_batch_sig <- extract_significant_genes(
   time_batch_table,
-  excel = glue("excel/wellcome_time_batch_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_time_batch_sva-v{ver}.xlsx"))
 time_batch_sig
 ```
 
 ## Strain
-
-## Contrasts of interest
 
 I neglected to set a contrast name/value for this.
 
@@ -908,79 +1198,347 @@ I neglected to set a contrast name/value for this.
 ## Oh, I just let the computer choose the numerator/denominator on its own.
 ```
 
-The infecting strain I think should prove one of the more interesting comparisons.
+The infecting strain I think should prove one of the more interesting
+comparisons.
+
+### SVA
 
 ```{r}
-parasite_sva_de <- all_pairwise(wellcome_parafilt, model_batch = "svaseq", filter = TRUE)
+parasite_sva_de <- all_pairwise(wellcome_parasite_filt, model_batch = "svaseq", filter = TRUE)
 parasite_sva_de
+
 parasite_sva_table <- combine_de_tables(
   parasite_sva_de,
-  excel = glue("excel/wellcome_parasite_table_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_parasite_table_sva-v{ver}.xlsx"))
 parasite_sva_table
+
 parasite_sva_sig <- extract_significant_genes(
   parasite_sva_table,
-  excel = glue("excel/wellcome_parasite_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_parasite_sig_sva-v{ver}.xlsx"))
 parasite_sva_sig
+```
 
-parasite_batch_de <- all_pairwise(wellcome_parafilt, model_batch = "batchseq", filter = TRUE)
+### Batch in model
+
+```{r}
+parasite_batch_de <- all_pairwise(wellcome_parasite_filt, model_batch = TRUE, filter = TRUE)
 parasite_batch_de
+
 parasite_batch_table <- combine_de_tables(
   parasite_batch_de,
-  excel = glue("excel/wellcome_parasite_table_batch-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_parasite_table_batch-v{ver}.xlsx"))
 parasite_batch_table
+
 parasite_batch_sig <- extract_significant_genes(
   parasite_batch_table,
-  excel = glue("excel/wellcome_parasite_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_parasite_sig_sva-v{ver}.xlsx"))
 parasite_batch_sig
 ```
 
 ## Outcome
 
+As stated above, clinical outcome by itself does not have much
+information content in this dataset.
+
+### SVA
+
 ```{r}
 outcome_sva_de <- all_pairwise(wellcome_outcome_filt, model_batch = "svaseq", filter = TRUE)
 outcome_sva_de
+
 outcome_sva_table <- combine_de_tables(
   outcome_sva_de,
-  excel = glue("excel/wellcome_outcome_table_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outcome_table_sva-v{ver}.xlsx"))
 outcome_sva_table
+
 outcome_sva_sig <- extract_significant_genes(
   outcome_sva_table,
-  excel = glue("excel/wellcome_outcome_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outcome_sig_sva-v{ver}.xlsx"))
 outcome_sva_sig
+```
 
-outcome_batch_de <- all_pairwise(wellcome_outcome_filt, model_batch = "batchseq", filter = TRUE)
+### Batch in model
+
+```{r}
+outcome_batch_de <- all_pairwise(wellcome_outcome_filt, model_batch = TRUE, filter = TRUE)
 outcome_batch_de
+
 outcome_batch_table <- combine_de_tables(
   outcome_batch_de,
-  excel = glue("excel/wellcome_outcome_table_batch-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outcome_table_batch-v{ver}.xlsx"))
 outcome_batch_table
+
 outcome_batch_sig <- extract_significant_genes(
   outcome_batch_table,
-  excel = glue("excel/wellcome_outcome_sig_sva-v{ver}.xlsx"))
+  excel = glue("excel/CL_biopsies_outcome_sig_sva-v{ver}.xlsx"))
 outcome_batch_sig
 ```
 
-# Additional GSVA
+## Drug treatment
 
-Another round of GSVA, I am not sure why this is here?
+### SVA
+
+```{r}
+drug_sva_de <- all_pairwise(wellcome_drug_filt, model_batch = "svaseq", filter = TRUE)
+drug_sva_de
+
+drug_sva_table <- combine_de_tables(
+  drug_sva_de,
+  excel = glue("excel/CL_biopsies_drug_table_sva-v{ver}.xlsx"))
+drug_sva_table
+
+drug_sva_sig <- extract_significant_genes(
+  drug_sva_table,
+  excel = glue("excel/CL_biopsies_drug_sig_sva-v{ver}.xlsx"))
+drug_sva_sig
+```
+
+### Batch in model
+
+```{r}
+drug_batch_de <- all_pairwise(wellcome_drug_filt, model_batch = TRUE, filter = TRUE)
+drug_batch_de
+
+drug_batch_table <- combine_de_tables(
+  drug_batch_de,
+  excel = glue("excel/CL_biopsies_drug_table_batch-v{ver}.xlsx"))
+drug_batch_table
+
+drug_batch_sig <- extract_significant_genes(
+  drug_batch_table,
+  excel = glue("excel/CL_biopsies_drug_sig_sva-v{ver}.xlsx"))
+drug_batch_sig
+```
+
+## Parasite and time
+
+This requires setting up the contrasts of interest.  I am going to
+assume cross species/cross time are not interesting, and that v3/v1
+and v3/v2 are not interesting.
+
+Note to self, do not forget that I sanitize the data by removing punctuation!
+
+```{r}
+speciestime_keepers <- list(
+  "pan_v2v1" = c("lvpanamensisv2", "lvpanamensisv1"),
+  "pan_v3v1" = c("lvpanamensisv3", "lvpanamensisv1"),
+  "braz_v2v1" = c("lvbraziliensisv2", "lvbraziliensisv1"),
+  "braz_v3v1" = c("lvbraziliensisv3", "lvbraziliensisv1"),
+  "v1_panbraz" = c("lvbraziliensisv1", "lvpanamensisv1"),
+  "v2_panbraz" = c("lvbraziliensisv2", "lvpanamensisv2"),
+  "v3_panbraz" = c("lvbraziliensisv3", "lvpanamensisv3"))
+```
+
+### SVA
+
+```{r}
+speciestime_sva_de <- all_pairwise(speciestime, model_batch = "svaseq", filter = TRUE)
+speciestime_sva_de
+
+speciestime_sva_table <- combine_de_tables(
+  speciestime_sva_de, keepers = speciestime_keepers,
+  excel = glue("excel/CL_biopsies_speciestime_table_sva-v{ver}.xlsx"))
+speciestime_sva_table
+
+speciestime_sva_sig <- extract_significant_genes(
+  speciestime_sva_table,
+  excel = glue("excel/CL_biopsies_speciestime_sig_sva-v{ver}.xlsx"))
+speciestime_sva_sig
+```
+
+### Batch in model
+
+```{r}
+speciestime_sva_de <- all_pairwise(speciestime, model_batch = TRUE, filter = TRUE)
+speciestime_sva_de
+
+speciestime_sva_table <- combine_de_tables(
+  speciestime_sva_de, keepers = speciestime_keepers,
+  excel = glue("excel/CL_biopsies_speciestime_table_sva-v{ver}.xlsx"))
+speciestime_sva_table
+
+speciestime_sva_sig <- extract_significant_genes(
+  speciestime_sva_table,
+  excel = glue("excel/CL_biopsies_speciestime_sig_sva-v{ver}.xlsx"))
+speciestime_sva_sig
+```
+
+## Drug treatment and time
+
+Same rules here as strain+time
+
+```{r}
+drugtime_keepers <- list(
+  "milt_v2v1" = c("miltefosinev2", "miltefosinev1"),
+  "milt_v3v1" = c("miltefosinev3", "miltefosinev1"),
+  "gluc_v2v1" = c("antimoniatev2", "antimoniatev1"),
+  "gluc_v3v1" = c("antimoniatev3", "antimoniatev1"),
+  "v1_miltgluc" = c("miltefosinev1", "antimoniatev1"),
+  "v2_miltgluc" = c("miltefosinev2", "antimoniatev2"),
+  "v3_miltgluc" = c("miltefosinev3", "antimoniatev3"))
+```
+
+### SVA
+
+```{r}
+drugtime_sva_de <- all_pairwise(drugtime, model_batch = "svaseq", filter = TRUE)
+drugtime_sva_de
+
+drugtime_sva_table <- combine_de_tables(
+  drugtime_sva_de, keepers = drugtime_keepers,
+  excel = glue("excel/CL_biopsies_drugtime_table_sva-v{ver}.xlsx"))
+drugtime_sva_table
+
+drugtime_sva_sig <- extract_significant_genes(
+  drugtime_sva_table,
+  excel = glue("excel/CL_biopsies_drugtime_sig_sva-v{ver}.xlsx"))
+drugtime_sva_sig
+```
+
+### Batch in model
+
+```{r}
+drugtime_sva_de <- all_pairwise(drugtime, model_batch = TRUE, filter = TRUE)
+drugtime_sva_de
+
+drugtime_sva_table <- combine_de_tables(
+  drugtime_sva_de, keepers = drugtime_keepers,
+  excel = glue("excel/CL_biopsies_drugtime_table_sva-v{ver}.xlsx"))
+drugtime_sva_table
+
+drugtime_sva_sig <- extract_significant_genes(
+  drugtime_sva_table,
+  excel = glue("excel/CL_biopsies_drugtime_sig_sva-v{ver}.xlsx"))
+drugtime_sva_sig
+```
+
+# Ontology searches
+
+Given the results in the previous blocks, let us use gProfiler2 in
+look for over represented categories/ontologies in the suspect
+databases: GO/reactome/kegg/TF/wikipath/etc.
+
+I think for the moment I will do this entirely with the sva results.
+
+## Outcome and time
+
+I have a series of wrapper functions for
+gProfiler2/goseq/clusterProfiler/topGO/GOstats.  Some of them are
+smart enough to take as input the result from
+extract_significant_genes().
+
+There is also a function which writes pretty-ified ontology results,
+but it works on a single-table basis.
+
+```{r}
+outtime_gprofiler <- all_gprofiler(outtime_sva_sig)
+
+outtime_gprofiler$curev1v2_up$pvalue_plots$BP
+outtime_gprofiler$failv1v2_up$pvalue_plots$KEGG
+outtime_gprofiler$cfv1_up$pvalue_plots$REAC
+
+## Note, I am writing a set of methods for write_gprofiler_data so that it is
+## aware of the result from all_gprofiler and can handle either all contrasts
+## or a set of desired contrasts.
+write_all <- function(result) {
+  for (n in names(result)) {
+    name <- glue("excel/gprofiler_{n}.xlsx")
+    res <- result[[n]]
+    written <- try(write_gprofiler_data(res, excel = name))
+  }
+}
+
+written <- write_all(outtime_gprofiler)
+```
+
+## Visit
+
+```{r}
+visit_gprofiler <- all_gprofiler(time_sva_sig)
+
+written <- write_all(visit_gprofiler)
+```
+
+## Strain
+
+```{r}
+parasite_gprofiler <- all_gprofiler(parasite_sva_sig)
+
+written <- write_all(parasite_gprofiler)
+```
+
+## Outcome
+
+```{r}
+outcome_gprofiler <- all_gprofiler(outcome_sva_sig)
+
+written <- write_all(outcome_gprofiler)
+```
+
+## Treatment
+
+```{r}
+drug_gprofiler <- all_gprofiler(drug_sva_sig)
+
+written <- write_all(drug_gprofiler)
+```
+
+## Strain and time
+
+```{r}
+speciestime_gprofiler <- all_gprofiler(speciestime_sva_sig)
+
+written <- write_all(speciestime_gprofiler)
+```
+
+## Drug and time
+
+```{r}
+drugtime_gprofiler <- all_gprofiler(drugtime_sva_sig)
+
+written <- write_all(drugtime_gprofiler)
+```
+
+# GSVA
+
+From my perspective, it seems that the most interesting GSVA
+comparison is to look for scores changing between the cure and fail
+samples.  The following block therefore passes the raw expression data
+and performs the gene set variance analysis of it against the mSigDB
+C2 set of categories by default.  We can pretty easily change the
+mSigDB release/category set; except I would need download the dataset
+to the container to use a newer revision and I am not sure about
+potential licensing restrictions; so this will just use the publicly
+available signatures in the 'GSVAdata' package.
+
+```{r}
+wt_gsva <- simple_gsva(wellcome_outcome_filt, signature_category = "c7")
+wt_gsva
+
+wt_gsva_sig <- get_sig_gsva_categories(wt_gsva, excel = "excel/CL_biopsies_gsva_outcome_c7.xlsx")
+wt_gsva_sig
+```
+
+Hmm, did I get confused, is C7 what I thought it was?  Yeah, it is the
+immunologic signature sets.  C2 is the larger set of experiments.
 
 ```{r}
 wellcome_gsva_c2 <- simple_gsva(wellcome_filtered, signature_category = "c2")
 wellcome_gsva_c2_sig <- get_sig_gsva_categories(
   wellcome_gsva_c2,
-  excel = "excel/wellcome_gsva_c2.xlsx")
-
-wellcome_gsva_c7 <- simple_gsva(wellcome_filtered, signature_category = "c7")
-wellcome_gsva_c7_sig <- get_sig_gsva_categories(
-  wellcome_gsva_c7,
-  excel = "excel/wellcome_gsva_c7.xlsx")
+  excel = "excel/CL_biopsies_gsva_outcome_c2.xlsx")
 ```
 
-```{r}
-outtime_gprofiler <- all_gprofiler(outtime_sva_sig)
-outtime_gprofiler$curev1v2_up$pvalue_plots$bpp_plot_over
-outtime_gprofiler$failv1v2_up$pvalue_plots$kegg_plot_over
+The following blocks may be used to save and reload the state of the data.
 
-outtime_gprofiler$cfv1_up$pvalue_plots$reactome_plot_over
-outtime_gprofiler$cfv1_down$pvalue_plots$reactome_plot_over
+```{r}
+pander::pander(sessionInfo())
+message("This is hpgltools commit: ", get_git_commit())
+this_save <- paste0(gsub(pattern = "\\.Rmd", replace = "", x = rmd_file), "-v", ver, ".rda.xz")
+#message("Saving to ", this_save)
+tmp <- sm(saveme(filename = this_save))
+```
+
+```{r loadme, eval=FALSE}
+loadme(filename = this_save)
 ```
