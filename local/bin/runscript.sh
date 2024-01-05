@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
+set -o errexit
+set -o errtrace
+set -o pipefail
 start=$(pwd)
 ## Note that VERSION here is not the same as the version used to build the container.
 ## I _need_ to change one of them.
 export VERSION=$(date +%Y%m)
-inputs="00preprocessing.Rmd 01index.Rmd"
 counts="cl_biopsies_hg38_hisat.tar cl_biopsies_hg38_salmon.tar.xz cl_biopsies_lpanamensis_hisat.tar"
+
+## Before going any further, attempt to create the output directory and move into it.
+## If this fails, we should die immediately.
+output_dir="$(date +%Y%m%d)_outputs"
+mkdir -p "${output_dir}"
+cd "${output_dir}" || exit
+
 
 function usage() {
     echo "This script by default will render every file in the list:"
@@ -18,11 +27,13 @@ function usage() {
     echo "-c: Clean up the output directory."
 }
 
+
 function cleanup() {
     echo "Cleaning the output directory to rerun."
     cd "${output_dir}" || exit
     rm -f ./*.finished*
 }
+
 
 function render_inputs() {
     echo "Version: ${VERSION}"
@@ -78,12 +89,7 @@ shift $(expr $OPTIND - 1) # remove options from positional parameters
 
 ## If -i is not provided, then we are not working from within the container
 ## and so will not create a directory from within the /output bind mount.
-
-output_dir="/output/$(date +%Y%m%d)_outputs"
-
-mkdir -p "${output_dir}"
-## Handle the default state if no parameters are provided.
-cd "${output_dir}" || exit
+inputs="00preprocessing.Rmd 01index.Rmd"
 echo "No input file(s) given, analyzing the archived data."
 rsync -a /data/ .
 for f in ${counts}; do
