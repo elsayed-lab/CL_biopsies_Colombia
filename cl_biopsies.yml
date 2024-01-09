@@ -90,7 +90,7 @@ echo "Beginning installation with version: ${VERSION}."
 
 
 %runscript
-/usr/local/bin/runscript.sh
+/usr/local/bin/runscript.sh $*
 
 
 ## The setup block will be used to copy material which I cannot acquire

@@ -34,7 +34,6 @@ library(forcats)
 library(glue)
 library(EuPathDB)
 
-tt <- sm(devtools::load_all("~/hpgltools"))
 knitr::opts_knit$set(
   progress = TRUE, verbose = TRUE, width = 90, echo = TRUE)
 knitr::opts_chunk$set(

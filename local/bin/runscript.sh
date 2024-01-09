@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -o errexit
+#set -o errexit
 set -o errtrace
 set -o pipefail
 start=$(pwd)
@@ -40,7 +40,7 @@ function render_inputs() {
     echo "This script should render the Rmd files in the list:"
     echo "${inputs}."
     mkdir -p excel figures
-    for input in ${inputs}; do
+    for input in $(echo "${inputs}" | perl -pe "tr/:/ /"); do
         base=$(basename "$input" .Rmd)
         finished="${base}.finished"
         if [[ -f "${finished}" ]]; then
@@ -73,12 +73,14 @@ number=0; rest=false; ws=false
 # Parse short options
 OPTIND=1
 while getopts "ch:i:" opt; do
+    echo "Starting the getopts while."
     case "$opt" in
         'c') cleanup
            exit 0;;
         'h') usage
            exit 0;;
         'i') inputs=$OPTARG
+             echo "In the getopts while loop, picked up i"
              render_inputs
              exit 0;;
         *) usage
@@ -89,7 +91,7 @@ shift $(expr $OPTIND - 1) # remove options from positional parameters
 
 ## If -i is not provided, then we are not working from within the container
 ## and so will not create a directory from within the /output bind mount.
-inputs="00preprocessing.Rmd 01index.Rmd"
+inputs="00preprocessing.Rmd:01index.Rmd"
 echo "No input file(s) given, analyzing the archived data."
 rsync -a /data/ .
 for f in ${counts}; do
