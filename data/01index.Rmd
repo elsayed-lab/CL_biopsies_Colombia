@@ -1,5 +1,5 @@
 ---
-title: "An analysis of cutaneous leishmaniasis biopsies: `Sys.getenv('VERSION')`"
+title: "An analysis of cutaneous leishmaniasis biopsies: `r Sys.getenv('VERSION')`"
 author: "Najib El-Sayed"
 date: "`r Sys.Date()`"
 output:

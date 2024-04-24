@@ -44,8 +44,9 @@ export MAMBA_EXE=/usr/bin/micromamba
 export MAMBA_ROOT_PREFIX="/sw/local/conda/${VERSION}"
 export PAGER=less
 export PATH=/sw/local/conda/${VERSION}/envs/hpgltools/bin:/sw/local/conda/${VERSION}/condabin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export R_ENABLE_JIT=3
-export R_MAX_NUM_DLLS=256
+export R_MAX_NUM_DLLS=512
+export R_USER_CACHE_DIR="/tmp/my_r_cache"
+export DEFAULT_INPUT="00preprocessing.Rmd:01index.Rmd"
 
 
 ## Instead of copying files within the setup section, one should use the files block, I think because
@@ -83,6 +84,8 @@ Version v202310
 
 %post
 export VERSION=202310
+export BIOC_VERSION=3.18
+export R_BIOC_VERSION=${BIOC_VERSION}
 echo "Beginning installation with version: ${VERSION}."
 /usr/local/bin/setup_debian.sh
 /usr/local/bin/setup_hpgltools.sh
